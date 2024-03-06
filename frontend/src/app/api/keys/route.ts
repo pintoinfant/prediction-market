@@ -22,8 +22,8 @@ export const GET = async () => {
     publicKey = secp256k1.publicKeyCreate(privateKey);
     return NextResponse.json({
       success: true,
-      privateKey: new Uint8Array(privateKey).toString(),
-      publicKey: publicKey.toString(),
+      privateKey: new Uint8Array(privateKey),
+      publicKey: publicKey,
     });
   } catch {
     return NextResponse.json({
