@@ -15,7 +15,7 @@ const encrypt = async (key: Uint8Array, message: string) => {
     let ciphertext = await siv.seal(plaintext, []);
     return {
       success: true,
-      ciphertext: ciphertext.toString(),
+      ciphertext,
     };
   } catch (e) {
     return {
@@ -44,6 +44,6 @@ export async function POST(request: Request) {
   const ecdhPointX = secp256k1.ecdh(publicKeyArray, privateKeyArray);
   let keyData = Uint8Array.from(ecdhPointX);
   let encryptedData = await encrypt(keyData, message);
-  return NextResponse.json({ keyData: keyData.toString(), encryptedData });
+  return NextResponse.json({ keyData: keyData.toString(), encryptedMessage: encryptedData.ciphertext });
   //   return Response.json({ res });
 }
