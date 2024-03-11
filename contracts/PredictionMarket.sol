@@ -5,6 +5,13 @@ contract PredictionMarket {
     address public owner;
     uint256 public marketCount;
 
+    struct Secrets {
+        string sharedSecret;
+        string publicKey;
+    }
+
+    mapping(uint256 => Secrets) private sharedSecret;
+
     enum MarketOutcome {
         NotResolved,
         Yes,
@@ -17,6 +24,7 @@ contract PredictionMarket {
         uint256 totalYesVotes;
         uint256 totalNoVotes;
         uint256 totalWinnings;
+        bytes[] encryptedVotes;
         MarketOutcome outcome;
         mapping(address => uint256) userVotes;
         mapping(address => uint256) userWinnings;
@@ -25,18 +33,9 @@ contract PredictionMarket {
     mapping(uint256 => Market) public markets;
 
     event MarketCreated(uint256 indexed id, string question);
-    event VotesBought(
-        uint256 indexed id,
-        address indexed buyer,
-        uint256 amount,
-        bool prediction
-    );
+    event VotesBought(uint256 indexed id, address indexed buyer, uint256 amount, bool prediction);
     event MarketResolved(uint256 indexed id, MarketOutcome outcome);
-    event WinningsClaimed(
-        uint256 indexed id,
-        address indexed claimer,
-        uint256 amount
-    );
+    event WinningsClaimed(uint256 indexed id, address indexed claimer, uint256 amount);
 
     modifier onlyOwner() {
         require(msg.sender == owner, "Only the owner can call this function");
@@ -61,18 +60,28 @@ contract PredictionMarket {
         marketCount = 0;
     }
 
-    function createMarket(string memory _question) external onlyOwner {
+    function createMarket(
+        string memory _question,
+        string memory _publicKey,
+        string memory _sharedSecret
+    ) external onlyOwner {
         marketCount++;
         Market storage newMarket = markets[marketCount];
         newMarket.id = marketCount;
         newMarket.question = _question;
         newMarket.outcome = MarketOutcome.NotResolved;
+
+        Secrets storage secret = sharedSecret[marketCount];
+        secret.sharedSecret = _sharedSecret;
+        secret.publicKey = _publicKey;
+
         emit MarketCreated(marketCount, _question);
     }
 
     function buyVotes(
         uint256 _marketId,
-        bool _prediction
+        bool _prediction,
+        bytes calldata _encryptedVote
     ) external payable marketExists(_marketId) marketNotResolved(_marketId) {
         require(msg.value > 0, "Amount must be greater than 0");
 
@@ -84,9 +93,8 @@ contract PredictionMarket {
         } else {
             market.totalNoVotes += msg.value;
         }
-
+        market.encryptedVotes.push(_encryptedVote);
         market.userVotes[buyer] += msg.value;
-
         emit VotesBought(_marketId, buyer, msg.value, _prediction);
     }
 
@@ -108,10 +116,7 @@ contract PredictionMarket {
 
     function claimWinnings(uint256 _marketId) external marketExists(_marketId) {
         Market storage market = markets[_marketId];
-        require(
-            market.outcome != MarketOutcome.NotResolved,
-            "Market not yet resolved"
-        );
+        require(market.outcome != MarketOutcome.NotResolved, "Market not yet resolved");
 
         address claimer = msg.sender;
         uint256 winnings = (market.userVotes[claimer] * market.totalWinnings) /
