@@ -1,91 +1,131 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.19;
+pragma solidity ^0.8.0;
 
 contract PredictionMarket {
-    event ProposalCreated(uint indexed proposalId, string description);
-    event Voted(uint indexed proposalId, address indexed voter, bytes encryptedVote);
-    event VotingClosed(uint indexed proposalId);
+    address public owner;
+    uint256 public marketCount;
 
-    struct Proposal {
-        uint id; 
-        string description;
-        mapping(address => bool) hasVoted;
+    struct Secrets {
+        string sharedSecret;
+        string publicKey;
+    }
+
+    mapping(uint256 => Secrets) private sharedSecret;
+
+    enum MarketOutcome {
+        NotResolved,
+        Yes,
+        No
+    }
+
+    struct Market {
+        uint256 id;
+        string question;
+        uint256 totalYesVotes;
+        uint256 totalNoVotes;
+        uint256 totalWinnings;
         bytes[] encryptedVotes;
-        string[] decryptedVotes;
-        uint quorum;
-        uint voteCount;
+        MarketOutcome outcome;
+        mapping(address => uint256) userVotes;
+        mapping(address => uint256) userWinnings;
     }
 
-    mapping(uint => Proposal) public proposals;
-    uint public nextProposalId = 1;
+    mapping(uint256 => Market) public markets;
 
-    function createProposal(string memory description, uint quorum) external returns (uint proposalId) {
-        proposalId = nextProposalId;
-        nextProposalId++;
-        Proposal storage proposal = proposals[proposalId];
-        proposal.id = proposalId;
-        proposal.description = description;
-        proposal.quorum = quorum;
-        emit ProposalCreated(proposalId, description);
+    event MarketCreated(uint256 indexed id, string question);
+    event VotesBought(uint256 indexed id, address indexed buyer, uint256 amount, bool prediction);
+    event MarketResolved(uint256 indexed id, MarketOutcome outcome);
+    event WinningsClaimed(uint256 indexed id, address indexed claimer, uint256 amount);
+
+    modifier onlyOwner() {
+        require(msg.sender == owner, "Only the owner can call this function");
+        _;
     }
 
-    function getProposal(uint proposalId) external view returns (uint, string memory, uint, uint) {
-        Proposal storage proposal = proposals[proposalId];
-        return (proposal.id, proposal.description, proposal.quorum, proposal.voteCount);
+    modifier marketExists(uint256 _marketId) {
+        require(_marketId > 0 && _marketId <= marketCount, "Invalid market ID");
+        _;
     }
 
-    function vote(uint proposalId, bytes calldata encryptedVote) external {
-        Proposal storage proposal = proposals[proposalId];
-        require(!proposal.hasVoted[msg.sender], "Already voted");
-        require(proposal.voteCount < proposal.quorum, "Voting closed");
+    modifier marketNotResolved(uint256 _marketId) {
+        require(
+            markets[_marketId].outcome == MarketOutcome.NotResolved,
+            "Market already resolved"
+        );
+        _;
+    }
 
-        proposal.encryptedVotes.push(encryptedVote);
-        proposal.hasVoted[msg.sender] = true;
-        proposal.voteCount++;
+    constructor() {
+        owner = msg.sender;
+        marketCount = 0;
+    }
 
-        emit Voted(proposalId, msg.sender, encryptedVote);
+    function createMarket(
+        string memory _question,
+        string memory _publicKey,
+        string memory _sharedSecret
+    ) external onlyOwner {
+        marketCount++;
+        Market storage newMarket = markets[marketCount];
+        newMarket.id = marketCount;
+        newMarket.question = _question;
+        newMarket.outcome = MarketOutcome.NotResolved;
 
-        if (proposal.voteCount >= proposal.quorum) {
-            emit VotingClosed(proposalId);
+        Secrets storage secret = sharedSecret[marketCount];
+        secret.sharedSecret = _sharedSecret;
+        secret.publicKey = _publicKey;
+
+        emit MarketCreated(marketCount, _question);
+    }
+
+    function buyVotes(
+        uint256 _marketId,
+        bool _prediction,
+        bytes calldata _encryptedVote
+    ) external payable marketExists(_marketId) marketNotResolved(_marketId) {
+        require(msg.value > 0, "Amount must be greater than 0");
+
+        Market storage market = markets[_marketId];
+        address buyer = msg.sender;
+
+        if (_prediction) {
+            market.totalYesVotes += msg.value;
+        } else {
+            market.totalNoVotes += msg.value;
+        }
+        market.encryptedVotes.push(_encryptedVote);
+        market.userVotes[buyer] += msg.value;
+        emit VotesBought(_marketId, buyer, msg.value, _prediction);
+    }
+
+    function resolveMarket(
+        uint256 _marketId,
+        bool _outcome
+    ) external onlyOwner marketExists(_marketId) marketNotResolved(_marketId) {
+        Market storage market = markets[_marketId];
+        market.totalWinnings = market.totalNoVotes + market.totalYesVotes;
+
+        if (_outcome) {
+            market.outcome = MarketOutcome.Yes;
+            emit MarketResolved(_marketId, MarketOutcome.Yes);
+        } else {
+            market.outcome = MarketOutcome.No;
+            emit MarketResolved(_marketId, MarketOutcome.No);
         }
     }
 
-    function getVotes(uint proposalId) external view returns (bytes[] memory) {
-        return proposals[proposalId].encryptedVotes;
-    }
+    function claimWinnings(uint256 _marketId) external marketExists(_marketId) {
+        Market storage market = markets[_marketId];
+        require(market.outcome != MarketOutcome.NotResolved, "Market not yet resolved");
 
-    struct ProposalInfo {
-        uint id;
-        string description;
-        uint quorum;
-        uint voteCount;
-        bytes[] encryptedVotes;
-    }
+        address claimer = msg.sender;
+        uint256 winnings = (market.userVotes[claimer] * market.totalWinnings) /
+            market.userVotes[claimer];
+        market.userWinnings[claimer] += winnings;
 
-    function getAllProposals(bool open) external view returns (ProposalInfo[] memory) {
-        uint count = 0;
-        for (uint i = 1; i < nextProposalId; i++) {
-            if ((proposals[i].voteCount < proposals[i].quorum) == open) {
-                count++;
-            }
-        }
+        (bool success, ) = claimer.call{value: winnings}("");
+        require(success, "Transfer failed");
 
-        ProposalInfo[] memory proposalsInfo = new ProposalInfo[](count);
-        uint index = 0;
-        for (uint i = 1; i < nextProposalId; i++) {
-            if ((proposals[i].voteCount < proposals[i].quorum) == open) {
-                Proposal storage proposal = proposals[i];
-                proposalsInfo[index] = ProposalInfo({
-                    id: proposal.id,
-                    description: proposal.description,
-                    quorum: proposal.quorum,
-                    voteCount: proposal.voteCount,
-                    encryptedVotes: open ? new bytes[](0) : proposal.encryptedVotes
-                });
-                index++;
-            }
-        }
-
-        return proposalsInfo;
+        emit WinningsClaimed(_marketId, claimer, winnings);
     }
 }
