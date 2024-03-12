@@ -60,7 +60,7 @@ export default function Home() {
                 <div className="mt-10 flex justify-center items-between flex-col w-full">
                   <CreateMarket />
                   <ListMarkets />
-                  <ResolveMarket />
+                  <ResolveMarket marketId="1" />
                 </div>
               )}
             </div>

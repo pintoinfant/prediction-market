@@ -62,7 +62,7 @@ function ResolveFalseButton({ marketId }: { marketId: string }) {
   );
 }
 
-export default function BuyVotes({ marketId }: { marketId: string }) {
+export default function ResolveMarket({ marketId }: { marketId: string }) {
   return (
     <div className="flex justify-between items-center">
       <h1 className="font-bold">
